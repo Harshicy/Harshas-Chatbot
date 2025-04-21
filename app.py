@@ -7,24 +7,33 @@ from sentence_transformers import CrossEncoder
 import torch
 import os
 from dotenv import load_dotenv, find_dotenv
-torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]  # Fix for torch classes not found error
-load_dotenv(find_dotenv())  # Loads .env file contents into the application based on key-value pairs defined therein, making them accessible via 'os' module functions like os.getenv().
+import time
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
+# Fix for torch classes not found error
+torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]
+load_dotenv(find_dotenv())  # Load .env file
+
+# Configure Ollama API URL with fallback to a public endpoint (if available)
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_API_URL = f"{OLLAMA_BASE_URL}/api/generate"
-MODEL = os.getenv("MODEL", "deepseek-r1:7b")                                                      # Make sure you have it installed in ollama
+MODEL = os.getenv("MODEL", "deepseek-r1:7b")  # Ensure this model is available in your Ollama instance
 EMBEDDINGS_MODEL = "nomic-embed-text:latest"
 CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
+# Device configuration
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-reranker = None                                                        # 🚀 Initialize Cross-Encoder (Reranker) at the global level 
+# Initialize Cross-Encoder (Reranker)
+reranker = None
 try:
     reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
 except Exception as e:
     st.error(f"Failed to load CrossEncoder model: {str(e)}")
 
-st.set_page_config(page_title="Harsha's Chatbot", layout="wide")      # ✅ Streamlit configuration
+# Streamlit configuration
+st.set_page_config(page_title="Harsha's Chatbot", layout="wide")
 
 # Custom CSS
 st.markdown("""
@@ -38,7 +47,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# Manage Session state
+# Manage Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "retrieval_pipeline" not in st.session_state:
@@ -48,7 +57,8 @@ if "rag_enabled" not in st.session_state:
 if "documents_loaded" not in st.session_state:
     st.session_state.documents_loaded = False
 
-with st.sidebar:                                                                        # 📁 Sidebar
+# Sidebar
+with st.sidebar:
     st.header("📁 Document Management")
     uploaded_files = st.file_uploader(
         "Upload documents (PDF/DOCX/TXT)",
@@ -60,10 +70,10 @@ with st.sidebar:                                                                
         with st.spinner("Processing documents..."):
             process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_BASE_URL)
             st.success("Documents processed!")
+            st.session_state.documents_loaded = True
     
     st.markdown("---")
     st.header("⚙️ RAG Settings")
-    
     st.session_state.rag_enabled = st.checkbox("Enable RAG", value=True)
     st.session_state.enable_hyde = st.checkbox("Enable HyDE", value=True)
     st.session_state.enable_reranking = st.checkbox("Enable Neural Reranking", value=True)
@@ -75,14 +85,14 @@ with st.sidebar:                                                                
         st.session_state.messages = []
         st.rerun()
 
-    # 🚀 Footer (Bottom Right in Sidebar) For some Credits :)
+    # Footer Credits
     st.sidebar.markdown("""
-        <div style="position: absolute; top: 20px; right: 10px; font-size: 12px; color: gray;">
+        <div style="position: absolute; bottom: 10px; right: 10px; font-size: 12px; color: gray;">
             <b>Developed by:</b> Harsha © All Rights Reserved 2025
         </div>
     """, unsafe_allow_html=True)
 
-# 💬 Chat Interface
+# Chat Interface
 st.title("🤖 Harsha's Chatbot")
 st.caption("Advanced RAG Chatbot with GraphRAG, Hybrid Retrieval, Neural Reranking, and Chat History")
 
@@ -91,6 +101,7 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# Handle user input
 if prompt := st.chat_input("Ask about your documents..."):
     chat_history = "\n".join([msg["content"] for msg in st.session_state.messages[-5:]])  # Last 5 messages
     st.session_state.messages.append({"role": "user", "content": prompt})
@@ -102,19 +113,20 @@ if prompt := st.chat_input("Ask about your documents..."):
         response_placeholder = st.empty()
         full_response = ""
         
-        # 🚀 Build context
+        # Build context with RAG
         context = ""
         if st.session_state.rag_enabled and st.session_state.retrieval_pipeline:
             try:
                 docs = retrieve_documents(prompt, OLLAMA_API_URL, MODEL, chat_history)
                 context = "\n".join(
                     f"[Source {i+1}]: {doc.page_content}" 
-                    for i, doc in enumerate(docs)
+                    for i, doc in enumerate(docs[:st.session_state.max_contexts])
                 )
             except Exception as e:
                 st.error(f"Retrieval error: {str(e)}")
+                context = "No context available due to retrieval failure."
         
-        # 🚀 Structured Prompt
+        # Structured prompt
         system_prompt = f"""Use the chat history to maintain context:
             Chat History:
             {chat_history}
@@ -131,35 +143,53 @@ if prompt := st.chat_input("Ask about your documents..."):
             Question: {prompt}
             Answer:"""
         
-        # Stream response
-        response = requests.post(
-            OLLAMA_API_URL,
-            json={
-                "model": MODEL,
-                "prompt": system_prompt,
-                "stream": True,
-                "options": {
-                    "temperature": st.session_state.temperature,  # Use dynamic user-selected value
-                    "num_ctx": 4096
-                }
-            },
-            stream=True
+        # Setup retry session for API call
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[500, 502, 503, 504]
         )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        # Make API request with retry
         try:
+            response = session.post(
+                OLLAMA_API_URL,
+                json={
+                    "model": MODEL,
+                    "prompt": system_prompt,
+                    "stream": True,
+                    "options": {
+                        "temperature": st.session_state.temperature,
+                        "num_ctx": 4096
+                    }
+                },
+                stream=True,
+                timeout=30
+            )
+            response.raise_for_status()
+            
             for line in response.iter_lines():
                 if line:
                     data = json.loads(line.decode())
                     token = data.get("response", "")
                     full_response += token
                     response_placeholder.markdown(full_response + "▌")
-                    
-                    # Stop if we detect the end token
                     if data.get("done", False):
                         break
-                        
             response_placeholder.markdown(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
             
+        except requests.exceptions.ConnectionError as e:
+            st.error(f"Connection error to Ollama API: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable server.")
+            full_response = "Sorry, I couldn’t connect to the AI server. Please check your configuration."
+        except requests.exceptions.RequestException as e:
+            st.error(f"API request failed: {str(e)}")
+            full_response = "An error occurred while processing your request."
         except Exception as e:
-            st.error(f"Generation error: {str(e)}")
-            st.session_state.messages.append({"role": "assistant", "content": "Sorry, I encountered an error."})
+            st.error(f"Unexpected error: {str(e)}")
+            full_response = "An unexpected error occurred."
+        
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
