@@ -45,11 +45,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Initialize Cross-Encoder with offline support
 reranker = None
 try:
-    # Load model without use_auth_token (use cached files if available)
+    # Attempt to load model (relies on pre-cached files)
     reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
     st.success("CrossEncoder model loaded successfully.")
 except Exception as e:
-    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Pre-cache the model locally with `python -c \"from sentence_transformers import CrossEncoder; CrossEncoder('{CROSS_ENCODER_MODEL}')\"` or check cache at https://huggingface.co/docs/transformers/installation#offline-mode.")
+    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Pre-cache the model locally with `python -c \"from sentence_transformers import CrossEncoder; CrossEncoder('{CROSS_ENCODER_MODEL}')\"` and include the cache directory (~/.cache/huggingface/) in your repo, or check offline mode at https://huggingface.co/docs/transformers/installation#offline-mode.")
     reranker = None
 
 # Manage Session State
