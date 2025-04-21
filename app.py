@@ -11,31 +11,13 @@ import time
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-# Fix for torch classes not found error
-torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]
-load_dotenv(find_dotenv())  # Load .env file
+# Load environment variables first (must be before any Streamlit commands)
+load_dotenv(find_dotenv())
 
-# Configure Ollama API URL with fallback to a public endpoint (if available)
-OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
-OLLAMA_API_URL = f"{OLLAMA_BASE_URL}/api/generate"
-MODEL = os.getenv("MODEL", "deepseek-r1:7b")  # Ensure this model is available in your Ollama instance
-EMBEDDINGS_MODEL = "nomic-embed-text:latest"
-CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-
-# Device configuration
-device = "cuda" if torch.cuda.is_available() else "cpu"
-
-# Initialize Cross-Encoder (Reranker)
-reranker = None
-try:
-    reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
-except Exception as e:
-    st.error(f"Failed to load CrossEncoder model: {str(e)}")
-
-# Streamlit configuration
+# Streamlit configuration (must be the first Streamlit command)
 st.set_page_config(page_title="Harsha's Chatbot", layout="wide")
 
-# Custom CSS
+# Custom CSS (after set_page_config)
 st.markdown("""
     <style>
         .stApp { background-color: #f4f4f9; }
@@ -46,6 +28,28 @@ st.markdown("""
         .stButton>button { background-color: #00AAFF; color: white; }
     </style>
 """, unsafe_allow_html=True)
+
+# Fix for torch classes not found error
+torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]
+
+# Configure Ollama API URL with fallback
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+OLLAMA_API_URL = f"{OLLAMA_BASE_URL}/api/generate"
+MODEL = os.getenv("MODEL", "deepseek-r1:7b")
+EMBEDDINGS_MODEL = "nomic-embed-text:latest"
+CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+# Device configuration
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Initialize Cross-Encoder (Reranker) with offline handling
+reranker = None
+try:
+    # Attempt to load model; if offline, use cached files or fail gracefully
+    reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
+except Exception as e:
+    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Check internet or cache files at https://huggingface.co/docs/transformers/installation#offline-mode.")
+    reranker = None
 
 # Manage Session State
 if "messages" not in st.session_state:
@@ -68,7 +72,7 @@ with st.sidebar:
     
     if uploaded_files and not st.session_state.documents_loaded:
         with st.spinner("Processing documents..."):
-            process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_BASE_URL)
+            process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_API_URL)
             st.success("Documents processed!")
             st.session_state.documents_loaded = True
     
@@ -76,7 +80,7 @@ with st.sidebar:
     st.header("⚙️ RAG Settings")
     st.session_state.rag_enabled = st.checkbox("Enable RAG", value=True)
     st.session_state.enable_hyde = st.checkbox("Enable HyDE", value=True)
-    st.session_state.enable_reranking = st.checkbox("Enable Neural Reranking", value=True)
+    st.session_state.enable_reranking = st.checkbox("Enable Neural Reranking", value=True if reranker else False)
     st.session_state.enable_graph_rag = st.checkbox("Enable GraphRAG", value=True)
     st.session_state.temperature = st.slider("Temperature", 0.0, 1.0, 0.3, 0.05)
     st.session_state.max_contexts = st.slider("Max Contexts", 1, 5, 3)
