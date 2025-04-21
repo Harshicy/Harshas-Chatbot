@@ -32,8 +32,8 @@ st.markdown("""
 # Fix for torch classes not found error
 torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]
 
-# Configure API URLs with fallbacks
-OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
+# Configure API URLs with environment variable support, keeping port 11434
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://placeholder:11434")  # Placeholder to enforce configuration
 OLLAMA_API_URL = f"{OLLAMA_BASE_URL}/api/generate"
 MODEL = os.getenv("MODEL", "deepseek-r1:7b")
 EMBEDDINGS_MODEL = "nomic-embed-text:latest"
@@ -45,7 +45,6 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 # Initialize Cross-Encoder with offline support
 reranker = None
 try:
-    # Attempt to load model (relies on pre-cached files)
     reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
     st.success("CrossEncoder model loaded successfully.")
 except Exception as e:
@@ -77,9 +76,9 @@ with st.sidebar:
                 process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_API_URL)
                 st.success("Documents processed successfully!")
                 st.session_state.documents_loaded = True
-                st.session_state.retrieval_pipeline = retrieve_documents  # Assume this is set after processing
+                st.session_state.retrieval_pipeline = retrieve_documents
             except requests.exceptions.ConnectionError as e:
-                st.error(f"Connection error during document processing: {str(e)}. Ensure OLLAMA_API_URL is reachable.")
+                st.error(f"Connection error during document processing: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable server (e.g., https://your-ollama-server.com:11434) in your .env file.")
             except Exception as e:
                 st.error(f"Document processing failed: {str(e)}")
 
@@ -194,7 +193,7 @@ if prompt := st.chat_input("Ask about your documents..."):
             response_placeholder.markdown(full_response)
             
         except requests.exceptions.ConnectionError as e:
-            st.error(f"Connection error to Ollama API: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable server.")
+            st.error(f"Connection error to Ollama API: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable server (e.g., https://your-ollama-server.com:11434) in your .env file.")
             full_response = "Sorry, I couldn’t connect to the AI server. Please check your configuration."
         except requests.exceptions.RequestException as e:
             st.error(f"API request failed: {str(e)}")
