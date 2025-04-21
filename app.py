@@ -11,7 +11,7 @@ import time
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-# Load environment variables first (before any Streamlit commands)
+# Load environment variables first
 load_dotenv(find_dotenv())
 
 # Streamlit configuration (must be the first Streamlit command)
@@ -42,13 +42,14 @@ CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 # Device configuration
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Initialize Cross-Encoder with offline mode support
+# Initialize Cross-Encoder with offline support
 reranker = None
 try:
-    # Preload model to cache (run this locally first if possible)
-    reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device, use_auth_token=os.getenv("HF_TOKEN"))
+    # Load model without use_auth_token (use cached files if available)
+    reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
+    st.success("CrossEncoder model loaded successfully.")
 except Exception as e:
-    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Pre-cache the model locally or check internet/cache at https://huggingface.co/docs/transformers/installation#offline-mode.")
+    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Pre-cache the model locally with `python -c \"from sentence_transformers import CrossEncoder; CrossEncoder('{CROSS_ENCODER_MODEL}')\"` or check cache at https://huggingface.co/docs/transformers/installation#offline-mode.")
     reranker = None
 
 # Manage Session State
@@ -74,10 +75,13 @@ with st.sidebar:
         with st.spinner("Processing documents..."):
             try:
                 process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_API_URL)
-                st.success("Documents processed!")
+                st.success("Documents processed successfully!")
                 st.session_state.documents_loaded = True
+                st.session_state.retrieval_pipeline = retrieve_documents  # Assume this is set after processing
+            except requests.exceptions.ConnectionError as e:
+                st.error(f"Connection error during document processing: {str(e)}. Ensure OLLAMA_API_URL is reachable.")
             except Exception as e:
-                st.error(f"Document processing failed: {str(e)}. Check Ollama API connection.")
+                st.error(f"Document processing failed: {str(e)}")
 
     st.markdown("---")
     st.header("⚙️ RAG Settings")
@@ -124,7 +128,7 @@ if prompt := st.chat_input("Ask about your documents..."):
         context = ""
         if st.session_state.rag_enabled and st.session_state.retrieval_pipeline:
             try:
-                docs = retrieve_documents(prompt, OLLAMA_API_URL, MODEL, chat_history)
+                docs = st.session_state.retrieval_pipeline(prompt, OLLAMA_API_URL, MODEL, chat_history)
                 context = "\n".join(
                     f"[Source {i+1}]: {doc.page_content}" 
                     for i, doc in enumerate(docs[:st.session_state.max_contexts])
