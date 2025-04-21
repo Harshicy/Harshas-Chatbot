@@ -11,13 +11,13 @@ import time
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 
-# Load environment variables first (must be before any Streamlit commands)
+# Load environment variables first (before any Streamlit commands)
 load_dotenv(find_dotenv())
 
 # Streamlit configuration (must be the first Streamlit command)
 st.set_page_config(page_title="Harsha's Chatbot", layout="wide")
 
-# Custom CSS (after set_page_config)
+# Custom CSS
 st.markdown("""
     <style>
         .stApp { background-color: #f4f4f9; }
@@ -32,7 +32,7 @@ st.markdown("""
 # Fix for torch classes not found error
 torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]
 
-# Configure Ollama API URL with fallback
+# Configure API URLs with fallbacks
 OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://localhost:11434")
 OLLAMA_API_URL = f"{OLLAMA_BASE_URL}/api/generate"
 MODEL = os.getenv("MODEL", "deepseek-r1:7b")
@@ -42,13 +42,13 @@ CROSS_ENCODER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 # Device configuration
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Initialize Cross-Encoder (Reranker) with offline handling
+# Initialize Cross-Encoder with offline mode support
 reranker = None
 try:
-    # Attempt to load model; if offline, use cached files or fail gracefully
-    reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device)
+    # Preload model to cache (run this locally first if possible)
+    reranker = CrossEncoder(CROSS_ENCODER_MODEL, device=device, use_auth_token=os.getenv("HF_TOKEN"))
 except Exception as e:
-    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Check internet or cache files at https://huggingface.co/docs/transformers/installation#offline-mode.")
+    st.warning(f"Failed to load CrossEncoder model: {str(e)}. Running without reranking. Pre-cache the model locally or check internet/cache at https://huggingface.co/docs/transformers/installation#offline-mode.")
     reranker = None
 
 # Manage Session State
@@ -72,10 +72,13 @@ with st.sidebar:
     
     if uploaded_files and not st.session_state.documents_loaded:
         with st.spinner("Processing documents..."):
-            process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_API_URL)
-            st.success("Documents processed!")
-            st.session_state.documents_loaded = True
-    
+            try:
+                process_documents(uploaded_files, reranker, EMBEDDINGS_MODEL, OLLAMA_API_URL)
+                st.success("Documents processed!")
+                st.session_state.documents_loaded = True
+            except Exception as e:
+                st.error(f"Document processing failed: {str(e)}. Check Ollama API connection.")
+
     st.markdown("---")
     st.header("⚙️ RAG Settings")
     st.session_state.rag_enabled = st.checkbox("Enable RAG", value=True)
