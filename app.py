@@ -33,7 +33,9 @@ st.markdown("""
 torch.classes.__path__ = [os.path.join(torch.__path__[0], torch.classes.__file__)]
 
 # Configure API URLs with environment variable support, keeping port 11434
-OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://placeholder:11434")  # Placeholder to enforce configuration
+OLLAMA_BASE_URL = os.getenv("OLLAMA_API_URL", "http://placeholder:11434")
+if "placeholder" in OLLAMA_BASE_URL:
+    st.warning("OLLAMA_API_URL is not configured. Please set it to your external Ollama server (e.g., https://your-ollama-server.com:11434) in your .env file.")
 OLLAMA_API_URL = f"{OLLAMA_BASE_URL}/api/generate"
 MODEL = os.getenv("MODEL", "deepseek-r1:7b")
 EMBEDDINGS_MODEL = "nomic-embed-text:latest"
@@ -78,7 +80,7 @@ with st.sidebar:
                 st.session_state.documents_loaded = True
                 st.session_state.retrieval_pipeline = retrieve_documents
             except requests.exceptions.ConnectionError as e:
-                st.error(f"Connection error during document processing: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable server (e.g., https://your-ollama-server.com:11434) in your .env file.")
+                st.error(f"Connection error during document processing: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable external server (e.g., https://your-ollama-server.com:11434) in your .env file. Visit https://ollama.com/download to set up an Ollama server.")
             except Exception as e:
                 st.error(f"Document processing failed: {str(e)}")
 
@@ -193,7 +195,7 @@ if prompt := st.chat_input("Ask about your documents..."):
             response_placeholder.markdown(full_response)
             
         except requests.exceptions.ConnectionError as e:
-            st.error(f"Connection error to Ollama API: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable server (e.g., https://your-ollama-server.com:11434) in your .env file.")
+            st.error(f"Connection error to Ollama API: {str(e)}. Ensure OLLAMA_API_URL is set to a reachable external server (e.g., https://your-ollama-server.com:11434) in your .env file. Visit https://ollama.com/download to set up an Ollama server.")
             full_response = "Sorry, I couldn’t connect to the AI server. Please check your configuration."
         except requests.exceptions.RequestException as e:
             st.error(f"API request failed: {str(e)}")
